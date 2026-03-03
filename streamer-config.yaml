@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: streamer-config
+data:
+  AWS_ENDPOINT_URL: "https://atl1.digitaloceanspaces.com"
+  AWS_ACCESS_KEY_ID: "<******>"
+  AWS_SECRET_ACCESS_KEY: "<******>"

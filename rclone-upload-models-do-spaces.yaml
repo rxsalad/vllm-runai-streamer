@@ -1,0 +1,111 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-models-do-spaces
+  namespace: default
+spec:
+
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upload-models-do-spaces
+  template:
+    metadata:
+      labels:
+        app: upload-models-do-spaces
+    spec:
+      hostIPC: true
+
+      nodeSelector:
+        doks.digitalocean.com/gpu-model: mi325x
+
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      
+      containers:
+      - name: vllm-server 
+        image: docker.io/vllm/vllm-openai-rocm:v0.15.1
+        imagePullPolicy: Always
+        command: 
+        - bash
+        - -c
+        - |
+          set -ex  
+
+          apt-get update && apt-get install -y tree
+
+          curl -Lk 'https://downloads.rclone.org/v1.73.1/rclone-v1.73.1-linux-amd64.deb' -o rclone-v1.73.1-linux-amd64.deb && \
+          dpkg -i rclone-v1.73.1-linux-amd64.deb && \
+          rm rclone-v1.73.1-linux-amd64.deb 
+
+          pip3 install --no-cache-dir --break-system-packages huggingface_hub[cli]
+
+          # Test only
+          sleep infinity
+
+          #hf download meta-llama/Llama-3.1-70B-Instruct --local-dir /app/Llama-3.1-70B-Instruct
+          hf download meta-llama/Llama-3.1-8B-Instruct --local-dir /app/Llama-3.1-8B-Instruct
+
+          # Test models with GPUs before uploading
+
+          # DO Spaces bucket: rs-validation-test, folder: model-test
+          #rclone copy /app/Llama-3.1-70B-Instruct do-spaces:rs-validation-test/model-test/Llama-3.1-70B-Instruct --exclude "original/**" --transfers=8 -P          
+          rclone copy /app/Llama-3.1-8B-Instruct do-spaces:rs-validation-test/model-test/Llama-3.1-8B-Instruct --transfers=4 -P          
+
+          sleep infinity
+          
+        env:
+          - name: HF_TOKEN # kubectl create secret generic hf-token-secret --from-literal=HF_TOKEN=<******>
+            valueFrom:
+              secretKeyRef:
+                name: hf-token-secret
+                key: HF_TOKEN
+        resources:
+          limits:
+            amd.com/gpu: 8
+        volumeMounts:
+        - name: rclone-config-volume
+          mountPath: /root/.config/rclone/rclone.conf
+          subPath: rclone.conf
+        - name: temp-hf-cache # Optional
+          mountPath: /root/.cache/huggingface
+        - name: shm
+          mountPath: /dev/shm
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        securityContext:  # Container level
+          capabilities:
+            add:
+            - SYS_PTRACE
+          seccompProfile:
+            type: Unconfined
+      
+      securityContext:
+        supplementalGroups:  # Pod level
+        - 44
+      
+      volumes:
+      - name: rclone-config-volume
+        configMap:
+          name: rclone-config
+      - name: temp-hf-cache
+        hostPath:
+          path: /root/.cache/huggingface
+          type: DirectoryOrCreate
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Gi
+      - name: dev-kfd
+        hostPath:
+          path: /dev/kfd
+      - name: dev-dri
+        hostPath:
+          path: /dev/dri

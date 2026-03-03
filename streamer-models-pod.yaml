@@ -1,0 +1,82 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-models-pod
+  namespace: default
+spec:
+
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stream-models-pod
+  template:
+    metadata:
+      labels:
+        app: stream-models-pod
+    spec:
+      hostIPC: true
+
+      nodeSelector:
+        doks.digitalocean.com/gpu-model: mi325x
+
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      
+      containers:
+      - name: vllm-server 
+        image: docker.io/vllm/vllm-openai-rocm:v0.15.1
+        imagePullPolicy: Always
+        command: 
+        - bash
+        - -c
+        - |
+          set -ex  
+          
+          # AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY are passed as env vars from streamer-config ConfigMap
+          
+          RUNAI_STREAMER_S3_USE_VIRTUAL_ADDRESSING=0 \
+          AWS_EC2_METADATA_DISABLED=true \
+          vllm serve s3://rs-validation-test/model-test/Llama-3.1-8B-Instruct \
+            --load-format runai_streamer \
+            --served-model-name meta-llama/Llama-3.1-8B-Instruct
+
+        envFrom:
+          - configMapRef: # AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+              name: streamer-config
+        resources:
+          limits:
+            amd.com/gpu: 8
+        volumeMounts:
+        - name: shm
+          mountPath: /dev/shm
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        securityContext:  # Container level
+          capabilities:
+            add:
+            - SYS_PTRACE
+          seccompProfile:
+            type: Unconfined
+      
+      securityContext:
+        supplementalGroups:  # Pod level
+        - 44
+      
+      volumes:
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Gi
+      - name: dev-kfd
+        hostPath:
+          path: /dev/kfd
+      - name: dev-dri
+        hostPath:
+          path: /dev/dri

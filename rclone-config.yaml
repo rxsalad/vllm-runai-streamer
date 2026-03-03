@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rclone-config
+  namespace: default
+data:
+  rclone.conf: |
+    [do-spaces]
+    type = s3
+    provider = DigitalOcean
+    access_key_id = <******>
+    secret_access_key = <******>
+    region = atl1
+    endpoint = atl1.digitaloceanspaces.com
+    acl = private
