@@ -1,0 +1,115 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-streamer-benchmarker
+  namespace: default
+spec:
+
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: model-streamer-benchmarker
+  template:
+    metadata:
+      labels:
+        app: model-streamer-benchmarker
+    spec:
+
+      nodeSelector:
+        doks.digitalocean.com/gpu-model: mi325x
+
+      tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      
+      restartPolicy: Always
+      containers:
+      - name: vllm-server 
+        #image: docker.io/vllm/vllm-openai-rocm:v0.15.1
+        image: docker.io/richardxgf/vllm:model_streamer_benchmarker_1.0
+
+        imagePullPolicy: Always
+        #command: ["sh", "-c", "sleep infinity"] # Test only
+        command: ["sh", "-c", "python3 benchmark.py"]
+
+        env:
+          - name: CLIENT_NUMBER
+            value: "20"
+            
+          - name: NODE_NAME # Get the Node Name, useful for mapping to its physical server name    
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+
+          - name: TASK_ID
+            value: "llama_70b_vllm_model_streamer_20260307_0"
+          - name: OTHERS
+            value: "mi325_doks"
+          - name: HF_TOKEN # kubectl create secret generic hf-token-secret --from-literal=HF_TOKEN=<******>
+            valueFrom:
+              secretKeyRef:
+                name: hf-token-secret
+                key: HF_TOKEN
+
+        envFrom:
+          - configMapRef: # AWS_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+              name: streamer-config
+          - configMapRef: # MDB_USERNAME, MDB_PASSWORD, MDB_HOST, MDB_DATABASE, MDB_BENCHMARK_DB
+              name: bench-env
+
+        resources:
+          limits:
+            amd.com/gpu: 1 # 8
+        volumeMounts:
+        
+        - name: rclone-config-volume
+          mountPath: /root/.config/rclone/rclone.conf
+          subPath: rclone.conf
+
+        - name: temp-hf-cache # Optional
+          mountPath: /root/.cache/huggingface
+
+        - name: shm
+          mountPath: /dev/shm
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        securityContext:  # Container level
+          capabilities:
+            add:
+            - SYS_PTRACE
+          seccompProfile:
+            type: Unconfined
+      
+      securityContext:
+        supplementalGroups:  # Pod level
+        - 44
+
+      
+      volumes:
+
+      - name: rclone-config-volume
+        configMap:
+          name: rclone-config
+
+      - name: temp-hf-cache
+        hostPath:
+          path: /root/.cache/huggingface
+          type: DirectoryOrCreate
+
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Gi
+      - name: dev-kfd
+        hostPath:
+          path: /dev/kfd
+      - name: dev-dri
+        hostPath:
+          path: /dev/dri
